@@ -1,103 +1,242 @@
-import Image from "next/image";
+"use client";
+
+import { Card } from "@/components/ui/card";
+import { useCallback, useState } from "react";
+import { Loader2, FileText, Upload, Sparkles } from "lucide-react";
+import { useDropzone } from "react-dropzone";
+import Markdown from "react-markdown";
+import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeSanitize from "rehype-sanitize";
+import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
+import rehypeStringify from "rehype-stringify";
+import remarkEmoji from "remark-emoji";
+import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
+import { ChatInterface } from "@/components/chat-interface";
+import { DocumentMetadata } from "@/lib/types";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(false);
+  const [error, setError] = useState<string>("");
+  const [summary, setSummary] = useState<string>("");
+  const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
+  const [currentDocument, setCurrentDocument] = useState<DocumentMetadata>();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    try {
+      setError("");
+      setUploadProgress(true);
+      const formData = new FormData();
+      formData.append("file", acceptedFiles[0]);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed while uploading file");
+      }
+      const data = await response.json();
+      setSummary(data.summary);
+
+      const newDoc: DocumentMetadata = {
+        id: data.documentID,
+        filename: acceptedFiles[0].name,
+        uploadedAt: new Date(),
+        summary: data.summary,
+        pageCount: data.pageCount,
+        fileSize: acceptedFiles[0].size,
+      };
+      setDocuments((prev) => [...prev, newDoc]);
+      setCurrentDocument(newDoc);
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Unidentified Error Occurred"
+      );
+    } finally {
+      setUploadProgress(false);
+    }
+  }, []);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      "application/pdf": [".pdf"],
+      "application/docx": [".docx"],
+    },
+    maxSize: 20 * 1024 * 1024, // 20 MB
+  });
+
+  const handleMessage = async (
+    message: string,
+    documentID?: string
+  ): Promise<string> => {
+    try {
+      setLoading(true);
+
+      const endpoint = documentID ? "/api/question" : "/api/general-chat";
+
+      const requestBody = documentID
+        ? { question: message, documentID }
+        : { question: message };
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to Send Query");
+      }
+
+      const data = await response.json();
+      return data.answer || "Sorry, I couldn't process your request.";
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unidentified Error";
+      setError(errorMessage);
+      return `Error: ${errorMessage}`;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-cyan-50 to-emerald-50 dark:from-slate-900 dark:via-blue-950 dark:to-teal-950">
+      {/* Navbar */}
+      <nav className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-b border-blue-200 dark:border-teal-800">
+        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-blue-500 to-cyan-600 dark:from-teal-500 dark:to-cyan-500 rounded-xl shadow-lg">
+              <FileText className="size-8 text-white" />
+            </div>
+            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 via-cyan-600 to-teal-600 dark:from-cyan-400 dark:via-teal-400 dark:to-emerald-400 bg-clip-text text-transparent">
+              Docs Assistant
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {/* Theme Toggle */}
+            <ThemeToggle />
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </nav>
+
+      <div className="container mx-auto p-4">
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="w-full lg:w-1/2 flex flex-col gap-6">
+            <Card className="p-4 mb-6 bg-gradient-to-br from-white/80 via-blue-50/60 to-cyan-50/60 dark:from-slate-800/90 dark:via-blue-900/30 dark:to-teal-900/30 border-blue-200 dark:border-teal-700 shadow-lg shadow-blue-100/50 dark:shadow-teal-900/20 backdrop-blur-sm">
+              <div
+                {...getRootProps()}
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all duration-300 ${
+                  isDragActive
+                    ? "border-cyan-500 dark:border-cyan-400 bg-gradient-to-br from-cyan-50 to-blue-50 dark:from-cyan-900/20 dark:to-blue-900/20 scale-105 shadow-lg"
+                    : "border-teal-300 dark:border-teal-600 bg-gradient-to-br from-slate-50/50 to-emerald-50/50 dark:from-slate-700/50 dark:to-teal-800/30 hover:border-cyan-400 dark:hover:border-cyan-500 hover:shadow-md"
+                }`}
+              >
+                <input {...getInputProps()} />
+                {uploadProgress ? (
+                  <div className="flex flex-col justify-center items-center gap-4">
+                    <div className="relative">
+                      <Loader2 className="animate-spin size-6 text-cyan-600 dark:text-cyan-400" />
+                      <div className="absolute inset-0 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full opacity-20 animate-pulse"></div>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-medium text-slate-700 dark:text-slate-300">
+                        Processing Document
+                      </p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">
+                        Please wait while we analyze your file...
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-full flex flex-col items-center justify-center gap-4">
+                    <div className="p-4 bg-gradient-to-br from-teal-100 to-cyan-100 dark:from-teal-800/50 dark:to-cyan-800/50 rounded-full">
+                      <Upload className="size-6 text-teal-600 dark:text-cyan-400" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                        Drag and Drop Files Here
+                      </p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">
+                        Or click to select • PDF files up to 20MB
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+
+            {error && (
+              <Card className="p-4 mb-6 bg-gradient-to-r from-red-50 to-pink-50 dark:from-red-900/20 dark:to-pink-900/20 border-red-200 dark:border-red-700 shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className="p-1 bg-red-100 dark:bg-red-800/50 rounded-full">
+                    <div className="size-3 bg-red-500 rounded-full"></div>
+                  </div>
+                  <p className="text-red-700 dark:text-red-300 font-medium">
+                    {error}
+                  </p>
+                </div>
+              </Card>
+            )}
+
+            {summary && (
+              <Card className="p-6 mb-8 bg-gradient-to-br from-emerald-50/80 via-teal-50/60 to-cyan-50/60 dark:from-slate-800/90 dark:via-emerald-900/20 dark:to-teal-900/30 border-emerald-200 dark:border-emerald-700 shadow-lg shadow-emerald-100/50 dark:shadow-emerald-900/20 backdrop-blur-sm">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-400 dark:to-teal-500 rounded-lg shadow-md">
+                    <Sparkles className="size-5 text-white" />
+                  </div>
+                  <h2 className="text-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400 bg-clip-text text-transparent">
+                    Document Summary
+                  </h2>
+                </div>
+                <div className="prose prose-slate dark:prose-invert max-w-none">
+                  <div className="h-64 overflow-y-auto bg-white/60 dark:bg-slate-700/50 rounded-lg border border-emerald-200 dark:border-emerald-800 scroll-smooth">
+                    <div className="text-slate-700 dark:text-slate-300 leading-relaxed p-4">
+                      <Markdown
+                        remarkPlugins={[
+                          remarkGfm,
+                          remarkMath,
+                          remarkParse,
+                          remarkEmoji,
+                        ]}
+                        rehypePlugins={[
+                          rehypeKatex,
+                          rehypeHighlight,
+                          rehypeSanitize,
+                          rehypeStringify,
+                          rehypeSlug,
+                          rehypeAutolinkHeadings,
+                        ]}
+                      >
+                        {summary.trim()}
+                      </Markdown>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            )}
+          </div>
+
+          <div className="w-full lg:w-1/2 flex">
+            <ChatInterface
+              onSendMessage={handleMessage}
+              loading={loading}
+              currentDocument={currentDocument}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
