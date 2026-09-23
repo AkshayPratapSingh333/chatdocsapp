@@ -77,6 +77,82 @@ flowchart LR
 
 The document question route first retrieves relevant chunks from Pinecone, then gives those chunks to Gemini as context. This helps keep answers tied to the uploaded document.
 
+#### RAG workflow in this project
+
+RAG combines information retrieval with generative AI. Instead of asking the language model to answer from its training data alone, the application retrieves relevant passages from the uploaded document and includes them in the prompt used to generate the answer.
+
+1. **Ingest:** `/api/upload` parses the PDF or DOCX file.
+2. **Chunk:** LangChain splits extracted text into 1,000-character chunks with 200 characters of overlap.
+3. **Embed:** Google `embedding-001` converts each chunk into a numerical vector.
+4. **Index:** Pinecone stores each vector with a generated `documentID`.
+5. **Retrieve:** `/api/question` embeds the user's question and returns the four most similar chunks, filtered by `documentID`.
+6. **Generate:** Gemini receives the question and retrieved text and produces the answer shown in the chat interface.
+
+The overlap reduces the chance that a sentence or clause split across two chunks loses its surrounding context. The document filter is also important: it prevents a question about the selected upload from retrieving chunks belonging to another upload.
+
+#### Benefits and risks
+
+RAG can improve factual grounding, reduce the amount of text sent to the model, and make long documents searchable. It does not guarantee a correct answer. Retrieval quality depends on chunk size, embeddings, metadata filters, and the similarity-search limit. This implementation also summarizes only the first extracted chunk during upload, while question answering searches all indexed chunks.
+
+### Sentiment analysis
+
+Sentiment analysis is the process of classifying text according to its emotional or evaluative tone. A typical output contains a label such as `positive`, `neutral`, or `negative`, along with a confidence score. A more useful customer-support version can also detect emotions such as frustration, satisfaction, urgency, or confusion and extract the topic being discussed.
+
+Sentiment analysis is **not currently implemented** in this repository. The existing general-chat and document-question routes send text to Gemini for an answer, but they do not request, validate, store, or display a sentiment result.
+
+#### Suggested implementation for Docs Assistant
+
+Sentiment could be analyzed for each user message before or alongside the chat request:
+
+1. Receive the user's message in the server route.
+2. Ask a model or a dedicated classifier for strict JSON containing `label`, `score`, `emotion`, and optional `topic` fields.
+3. Validate the response against a schema and store the result with the chat message if history or analytics are added.
+4. Use the result to adapt the assistant's tone, flag urgent negative feedback, or summarize the overall sentiment of a document review session.
+
+Example result:
+
+```json
+{
+  "label": "negative",
+  "score": 0.91,
+  "emotion": "frustration",
+  "topic": "delivery delay"
+}
+```
+
+Sentiment should be treated as an estimate rather than a fact. Sarcasm, mixed opinions, domain-specific language, and short messages can produce unreliable classifications. User consent and privacy controls are also needed before retaining message-level sentiment data.
+
+### Product recommendation system
+
+A product recommendation system selects and ranks products that may be relevant to a user. It normally uses a product catalog, user preferences, browsing or purchase events, and contextual signals such as the current question or uploaded document.
+
+Product recommendations are **not currently implemented** in this repository. The application has no product data model, user accounts, interaction-event store, recommendation route, or ranking logic. Pinecone is used for document chunks, but that alone is not a product recommendation system.
+
+#### Suggested architecture
+
+For a future product-aware version, the system could use a hybrid approach:
+
+1. **Catalog data:** Store product ID, name, description, category, price, availability, and attributes in a database.
+2. **Product retrieval:** Create embeddings for product descriptions and use semantic search to find products related to the user's question or document.
+3. **Personalization:** Combine semantic relevance with explicit preferences and events such as views, likes, carts, and purchases.
+4. **Ranking:** Apply business rules for availability, price range, safety, and diversity, then rank the remaining candidates.
+5. **Explanation:** Return the product, a relevance score, and a short reason grounded in the matching product attributes.
+
+A simple hybrid ranking formula could be:
+
+```text
+finalScore = 0.50 * semanticSimilarity
+           + 0.25 * preferenceMatch
+           + 0.15 * popularity
+           + 0.10 * businessRuleScore
+```
+
+The weights should be evaluated against recommendation metrics such as precision@k, recall@k, click-through rate, conversion rate, and coverage. Recommendations should never suggest unavailable products, expose another user's activity, or use sensitive attributes without a clear and justified policy.
+
+#### Relationship to RAG
+
+RAG answers questions using retrieved document passages. A recommendation system retrieves and ranks products for an action. They can be combined: a user might ask a question about an uploaded product guide, RAG can ground the explanation in that guide, and a separate recommendation pipeline can select products whose catalog attributes match the user's needs. Keeping document chunks and product records in separate namespaces or indexes helps prevent unrelated retrieval results from being mixed.
+
 ### Text chunking
 
 Documents are split into chunks of up to 1,000 characters with 200 characters of overlap. Chunking makes large documents searchable and overlap helps preserve context that crosses chunk boundaries.
